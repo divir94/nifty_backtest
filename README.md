@@ -12,9 +12,40 @@ The app now supports both `Groww` and `Upstox` as historical data providers. You
 
 ## Setup
 
-1. Ensure `credentials.yaml` exists at the repository root.
-   - `groww.api_key` and `groww.secret` are used for Groww
-   - `upstox.access_token` is used for Upstox
+1. Provide credentials using either local `credentials.yaml`, environment variables, or Streamlit Cloud secrets.
+   - Local file:
+
+```yaml
+groww:
+  api_key: "YOUR_GROWW_API_KEY"
+  secret: "YOUR_GROWW_SECRET"
+
+upstox:
+  access_token: "YOUR_UPSTOX_ACCESS_TOKEN"
+```
+
+   - Environment variables:
+     - `GROWW_API_KEY`
+     - `GROWW_SECRET`
+     - `UPSTOX_ACCESS_TOKEN`
+   - Streamlit Cloud secrets:
+
+```toml
+[groww]
+api_key = "YOUR_GROWW_API_KEY"
+secret = "YOUR_GROWW_SECRET"
+
+[upstox]
+access_token = "YOUR_UPSTOX_ACCESS_TOKEN"
+```
+
+   - Flat Streamlit secrets also work:
+
+```toml
+GROWW_API_KEY = "YOUR_GROWW_API_KEY"
+GROWW_SECRET = "YOUR_GROWW_SECRET"
+UPSTOX_ACCESS_TOKEN = "YOUR_UPSTOX_ACCESS_TOKEN"
+```
 2. Create the environment with micromamba:
 
 ```bash

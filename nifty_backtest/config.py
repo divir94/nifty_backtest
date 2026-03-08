@@ -38,13 +38,6 @@ def load_groww_credentials(
     if env_api_key and env_secret:
         return GrowwCredentials(api_key=env_api_key, secret=env_secret)
 
-    config = _load_yaml(credentials_path or DEFAULT_CREDENTIALS_PATH)
-    groww_config = config.get("groww", {})
-    api_key = str(groww_config.get("api_key", "")).strip()
-    secret = str(groww_config.get("secret", "")).strip()
-    if api_key and secret:
-        return GrowwCredentials(api_key=api_key, secret=secret)
-
     secrets_api_key, secrets_secret = _load_streamlit_section_values(
         "groww",
         "api_key",
@@ -52,6 +45,13 @@ def load_groww_credentials(
     )
     if secrets_api_key and secrets_secret:
         return GrowwCredentials(api_key=secrets_api_key, secret=secrets_secret)
+
+    config = _load_yaml(credentials_path or DEFAULT_CREDENTIALS_PATH)
+    groww_config = config.get("groww", {})
+    api_key = str(groww_config.get("api_key", "")).strip()
+    secret = str(groww_config.get("secret", "")).strip()
+    if api_key and secret:
+        return GrowwCredentials(api_key=api_key, secret=secret)
 
     if required:
         raise CredentialsError(
@@ -70,15 +70,15 @@ def load_upstox_credentials(
     if env_access_token:
         return UpstoxCredentials(access_token=env_access_token)
 
+    (secrets_access_token,) = _load_streamlit_section_values("upstox", "access_token")
+    if secrets_access_token:
+        return UpstoxCredentials(access_token=secrets_access_token)
+
     config = _load_yaml(credentials_path or DEFAULT_CREDENTIALS_PATH)
     upstox_config = config.get("upstox", {})
     access_token = str(upstox_config.get("access_token", "")).strip()
     if access_token:
         return UpstoxCredentials(access_token=access_token)
-
-    (secrets_access_token,) = _load_streamlit_section_values("upstox", "access_token")
-    if secrets_access_token:
-        return UpstoxCredentials(access_token=secrets_access_token)
 
     if required:
         raise CredentialsError(
@@ -112,7 +112,38 @@ def _load_streamlit_section_values(section: str, *keys: str) -> tuple[str | None
     except Exception:
         return tuple(None for _ in keys)
 
-    section_values = secrets.get(section, {})
-    if not section_values:
+    try:
+        section_values = secrets.get(section, {})
+    except Exception:
         return tuple(None for _ in keys)
-    return tuple(str(section_values.get(key, "")).strip() or None for key in keys)
+    if isinstance(section_values, dict):
+        resolved = tuple(str(section_values.get(key, "")).strip() or None for key in keys)
+        if all(resolved):
+            return resolved
+
+    top_level_resolved = tuple(
+        _lookup_top_level_streamlit_secret(secrets, section, key) for key in keys
+    )
+    return top_level_resolved
+
+
+def _lookup_top_level_streamlit_secret(
+    secrets: Any,
+    section: str,
+    key: str,
+) -> str | None:
+    candidate_names = (
+        f"{section}_{key}",
+        f"{section}_{key}".upper(),
+        key,
+        key.upper(),
+    )
+    for candidate in candidate_names:
+        try:
+            value = secrets.get(candidate, "")
+        except Exception:
+            return None
+        cleaned = str(value).strip() if value is not None else ""
+        if cleaned:
+            return cleaned
+    return None
