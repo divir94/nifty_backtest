@@ -19,7 +19,8 @@ REVERSAL_PROXY_DEFINITION = StrategyDefinition(
     label="Reversal Proxy",
     description=(
         "Long-only, 1-minute candle proxy for an intraminute reversal idea. "
-        "Entry uses open/low/close thresholds and exit uses high/open/close thresholds."
+        "Entry uses open/low/close thresholds and exits use take-profit and optional "
+        "stop-loss levels relative to the filled buy price."
     ),
 )
 
@@ -31,7 +32,7 @@ class ReversalProxyStrategy:
     def annotate(self, candles: pd.DataFrame) -> pd.DataFrame:
         frame = candles.copy()
         frame["entry_signal"] = self.entry_signal(frame)
-        frame["exit_signal"] = self.exit_signal(frame)
+        frame["entry_trigger_price"] = self.entry_trigger_price(frame).where(frame["entry_signal"])
         return frame
 
     def entry_signal(self, candles: pd.DataFrame) -> pd.Series:
@@ -40,8 +41,5 @@ class ReversalProxyStrategy:
             & (candles["close"] - candles["low"] > self.config.buy_revert_threshold)
         )
 
-    def exit_signal(self, candles: pd.DataFrame) -> pd.Series:
-        return (
-            (candles["high"] - candles["open"] > self.config.sell_rise_threshold)
-            & (candles["high"] - candles["close"] > self.config.sell_revert_threshold)
-        )
+    def entry_trigger_price(self, candles: pd.DataFrame) -> pd.Series:
+        return candles["low"] + self.config.buy_revert_threshold

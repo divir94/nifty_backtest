@@ -99,11 +99,14 @@ def main() -> None:
         buy_revert_threshold = st.number_input(
             "Buy revert threshold", min_value=0.0, value=20.0, step=1.0
         )
-        sell_rise_threshold = st.number_input(
-            "Sell rise threshold", min_value=0.0, value=30.0, step=1.0
+        take_profit_threshold = st.number_input(
+            "Take profit threshold", min_value=0.0, value=30.0, step=1.0
         )
-        sell_revert_threshold = st.number_input(
-            "Sell revert threshold", min_value=0.0, value=10.0, step=1.0
+        use_stop_loss = st.toggle("Use stop loss", value=False)
+        stop_loss_threshold = (
+            st.number_input("Stop loss threshold", min_value=0.0, value=20.0, step=1.0)
+            if use_stop_loss
+            else None
         )
 
         st.subheader("Execution Settings")
@@ -124,8 +127,8 @@ def main() -> None:
         strategy_config = ReversalProxyConfig(
             buy_drop_threshold=buy_drop_threshold,
             buy_revert_threshold=buy_revert_threshold,
-            sell_rise_threshold=sell_rise_threshold,
-            sell_revert_threshold=sell_revert_threshold,
+            take_profit_threshold=take_profit_threshold,
+            stop_loss_threshold=stop_loss_threshold,
         )
         run_config = BacktestRunConfig(
             lots_per_trade=lots_per_trade,
@@ -319,8 +322,6 @@ def render_candle_chart(result) -> None:
         return
 
     frame = selected_result.candles.copy()
-    frame["buy_price"] = frame["low"]
-    frame["sell_price"] = frame["high"]
     frame["timestamp"] = to_ist_series(frame["timestamp"])
     frame["timestamp_label"] = frame["timestamp"].dt.strftime("%d %b %Y %H:%M")
     frame["hover_label"] = frame["timestamp"].dt.strftime("%d %b %Y %H:%M IST")
@@ -351,46 +352,50 @@ def render_candle_chart(result) -> None:
         )
     )
 
-    buy_signals = frame.loc[frame["entry_signal"]]
-    if not buy_signals.empty:
+    trade_log = selected_result.trade_log.copy()
+    if not trade_log.empty:
+        trade_log["entry_time"] = to_ist_series(trade_log["entry_time"])
+        trade_log["exit_time"] = to_ist_series(trade_log["exit_time"])
+        trade_log["entry_label"] = trade_log["entry_time"].dt.strftime("%d %b %Y %H:%M")
+        trade_log["exit_label"] = trade_log["exit_time"].dt.strftime("%d %b %Y %H:%M")
+        trade_log["entry_hover_label"] = trade_log["entry_time"].dt.strftime("%d %b %Y %H:%M IST")
+        trade_log["exit_hover_label"] = trade_log["exit_time"].dt.strftime("%d %b %Y %H:%M IST")
+
         figure.add_trace(
             go.Scatter(
-                x=buy_signals["timestamp_label"],
-                y=buy_signals["buy_price"],
+                x=trade_log["entry_label"],
+                y=trade_log["entry_price"],
                 mode="markers",
-                name="Buy Signal",
+                name="Buy",
                 marker={
                     "symbol": "triangle-up",
                     "size": 11,
                     "color": "#1f9d55",
                     "line": {"width": 1, "color": "#0f5132"},
                 },
-                customdata=buy_signals[["hover_label"]].to_numpy(),
+                customdata=trade_log[["entry_hover_label"]].to_numpy(),
                 hovertemplate=(
-                    "Buy signal<br>"
+                    "Buy<br>"
                     "Time: %{customdata[0]}<br>"
                     "Price: %{y:.2f}<extra></extra>"
                 ),
             )
         )
-
-    sell_signals = frame.loc[frame["exit_signal"]]
-    if not sell_signals.empty:
         figure.add_trace(
             go.Scatter(
-                x=sell_signals["timestamp_label"],
-                y=sell_signals["sell_price"],
+                x=trade_log["exit_label"],
+                y=trade_log["exit_price"],
                 mode="markers",
-                name="Sell Signal",
+                name="Sell",
                 marker={
                     "symbol": "triangle-down",
                     "size": 11,
                     "color": "#d64545",
                     "line": {"width": 1, "color": "#7f1d1d"},
                 },
-                customdata=sell_signals[["hover_label"]].to_numpy(),
+                customdata=trade_log[["exit_hover_label"]].to_numpy(),
                 hovertemplate=(
-                    "Sell signal<br>"
+                    "Sell<br>"
                     "Time: %{customdata[0]}<br>"
                     "Price: %{y:.2f}<extra></extra>"
                 ),

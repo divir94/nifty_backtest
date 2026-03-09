@@ -39,8 +39,8 @@ class Contract:
 class ReversalProxyConfig:
     buy_drop_threshold: float = 50.0
     buy_revert_threshold: float = 20.0
-    sell_rise_threshold: float = 30.0
-    sell_revert_threshold: float = 10.0
+    take_profit_threshold: float = 30.0
+    stop_loss_threshold: float | None = None
 
 
 @dataclass(frozen=True)

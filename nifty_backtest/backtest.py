@@ -35,6 +35,7 @@ def run_backtest(
                 contract=contract,
                 candles=candles,
                 strategy=strategy,
+                strategy_config=strategy_config,
                 run_config=run_config,
             )
         )
@@ -87,6 +88,7 @@ def _backtest_contract(
     contract: Contract,
     candles: pd.DataFrame,
     strategy: ReversalProxyStrategy,
+    strategy_config: ReversalProxyConfig,
     run_config: BacktestRunConfig,
 ) -> ContractBacktestResult:
     prepared = prepare_candles(candles, strategy)
@@ -94,6 +96,7 @@ def _backtest_contract(
     trades = simulate_trades(
         contract=contract,
         candles=prepared,
+        strategy_config=strategy_config,
         run_config=run_config,
     )
     trade_log = pd.DataFrame([asdict(trade) for trade in trades]) if trades else empty_trade_log()
@@ -119,7 +122,7 @@ def prepare_candles(candles: pd.DataFrame, strategy: ReversalProxyStrategy) -> p
                 "volume",
                 "open_interest",
                 "entry_signal",
-                "exit_signal",
+                "entry_trigger_price",
                 "trade_date",
             ]
         )
@@ -168,55 +171,38 @@ def simulate_trades(
     *,
     contract: Contract,
     candles: pd.DataFrame,
+    strategy_config: ReversalProxyConfig,
     run_config: BacktestRunConfig,
 ) -> list[Trade]:
     if candles.empty:
         return []
 
     trades: list[Trade] = []
-    pending_action: dict[str, object] | None = None
+    pending_entry: dict[str, object] | None = None
     position: dict[str, object] | None = None
 
     for _, day_frame in candles.groupby("trade_date", sort=True):
         rows = day_frame.reset_index(drop=True)
         for index, row in rows.iterrows():
             timestamp = row["timestamp"]
-
-            if pending_action is not None:
-                if pending_action["action"] == "entry" and position is None:
-                    position = {
-                        "entry_signal_time": pending_action["signal_time"],
-                        "entry_time": timestamp,
-                        "entry_price": float(row["open"]),
-                    }
-                elif pending_action["action"] == "exit" and position is not None:
-                    trades.append(
-                        build_trade(
-                            contract=contract,
-                            run_config=run_config,
-                            position=position,
-                            exit_signal_time=pending_action["signal_time"],
-                            exit_time=timestamp,
-                            exit_price=float(row["open"]),
-                            exit_reason="signal_next_open",
-                        )
-                    )
-                    position = None
-                pending_action = None
-
             is_last_row = index == len(rows) - 1
-            entry_signal = bool(row["entry_signal"])
-            exit_signal = bool(row["exit_signal"])
 
-            if run_config.fill_timing == FillTiming.SIGNAL_CANDLE_CLOSE:
+            if pending_entry is not None:
                 if position is None:
-                    if entry_signal:
-                        position = {
-                            "entry_signal_time": timestamp,
-                            "entry_time": timestamp,
-                            "entry_price": float(row["close"]),
-                        }
-                elif exit_signal:
+                    position = {
+                        "entry_signal_time": pending_entry["signal_time"],
+                        "entry_time": timestamp,
+                        "entry_price": float(pending_entry["trigger_price"]),
+                        "entry_fill_timing": FillTiming.NEXT_CANDLE_OPEN,
+                    }
+                pending_entry = None
+
+                exit_event = resolve_exit(
+                    row=row,
+                    position=position,
+                    strategy_config=strategy_config,
+                )
+                if exit_event is not None:
                     trades.append(
                         build_trade(
                             contract=contract,
@@ -224,25 +210,47 @@ def simulate_trades(
                             position=position,
                             exit_signal_time=timestamp,
                             exit_time=timestamp,
-                            exit_price=float(row["close"]),
-                            exit_reason="signal_close",
+                            exit_price=exit_event["price"],
+                            exit_reason=exit_event["reason"],
                         )
                     )
                     position = None
-            else:
+            entry_signal = bool(row["entry_signal"])
+
+            if run_config.fill_timing == FillTiming.SIGNAL_CANDLE_CLOSE:
                 if position is None:
-                    if entry_signal and not is_last_row:
-                        pending_action = {
-                            "action": "entry",
-                            "signal_time": timestamp,
+                    if entry_signal:
+                        position = {
+                            "entry_signal_time": timestamp,
+                            "entry_time": timestamp,
+                            "entry_price": float(row["entry_trigger_price"]),
+                            "entry_fill_timing": FillTiming.SIGNAL_CANDLE_CLOSE,
                         }
+                        exit_event = resolve_exit(
+                            row=row,
+                            position=position,
+                            strategy_config=strategy_config,
+                        )
+                        if exit_event is not None:
+                            trades.append(
+                                build_trade(
+                                    contract=contract,
+                                    run_config=run_config,
+                                    position=position,
+                                    exit_signal_time=timestamp,
+                                    exit_time=timestamp,
+                                    exit_price=exit_event["price"],
+                                    exit_reason=exit_event["reason"],
+                                )
+                            )
+                            position = None
                 else:
-                    if exit_signal and not is_last_row:
-                        pending_action = {
-                            "action": "exit",
-                            "signal_time": timestamp,
-                        }
-                    elif exit_signal and is_last_row:
+                    exit_event = resolve_exit(
+                        row=row,
+                        position=position,
+                        strategy_config=strategy_config,
+                    )
+                    if exit_event is not None:
                         trades.append(
                             build_trade(
                                 contract=contract,
@@ -250,15 +258,40 @@ def simulate_trades(
                                 position=position,
                                 exit_signal_time=timestamp,
                                 exit_time=timestamp,
-                                exit_price=float(row["close"]),
-                                exit_reason="signal_eod_close",
+                                exit_price=exit_event["price"],
+                                exit_reason=exit_event["reason"],
+                            )
+                        )
+                        position = None
+            else:
+                if position is None:
+                    if entry_signal and not is_last_row:
+                        pending_entry = {
+                            "signal_time": timestamp,
+                            "trigger_price": float(row["entry_trigger_price"]),
+                        }
+                else:
+                    exit_event = resolve_exit(
+                        row=row,
+                        position=position,
+                        strategy_config=strategy_config,
+                    )
+                    if exit_event is not None:
+                        trades.append(
+                            build_trade(
+                                contract=contract,
+                                run_config=run_config,
+                                position=position,
+                                exit_signal_time=timestamp,
+                                exit_time=timestamp,
+                                exit_price=exit_event["price"],
+                                exit_reason=exit_event["reason"],
                             )
                         )
                         position = None
 
             if is_last_row:
-                if pending_action and pending_action["action"] == "entry":
-                    pending_action = None
+                pending_entry = None
                 if position is not None:
                     trades.append(
                         build_trade(
@@ -272,9 +305,39 @@ def simulate_trades(
                         )
                     )
                     position = None
-                pending_action = None
 
     return trades
+
+
+def resolve_exit(
+    *,
+    row: pd.Series,
+    position: dict[str, object],
+    strategy_config: ReversalProxyConfig,
+) -> dict[str, object] | None:
+    entry_price = float(position["entry_price"])
+    target_price = entry_price + strategy_config.take_profit_threshold
+    stop_loss_threshold = strategy_config.stop_loss_threshold
+    stop_price = entry_price - stop_loss_threshold if stop_loss_threshold is not None else None
+
+    is_signal_candle_entry = (
+        position.get("entry_fill_timing") == FillTiming.SIGNAL_CANDLE_CLOSE
+        and position.get("entry_time") == row["timestamp"]
+    )
+
+    target_hit = float(row["high"]) >= target_price
+    if stop_price is None:
+        stop_hit = False
+    elif is_signal_candle_entry:
+        stop_hit = float(row["close"]) <= stop_price
+    else:
+        stop_hit = float(row["low"]) <= stop_price
+
+    if stop_hit:
+        return {"price": float(stop_price), "reason": "stop_loss"}
+    if target_hit:
+        return {"price": float(target_price), "reason": "take_profit"}
+    return None
 
 
 def build_trade(

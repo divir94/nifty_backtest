@@ -17,13 +17,12 @@ def test_reversal_proxy_signals_match_thresholds() -> None:
         ReversalProxyConfig(
             buy_drop_threshold=50.0,
             buy_revert_threshold=20.0,
-            sell_rise_threshold=30.0,
-            sell_revert_threshold=10.0,
+            take_profit_threshold=30.0,
         )
     )
 
     entries = strategy.entry_signal(candles)
-    exits = strategy.exit_signal(candles)
+    entry_prices = strategy.entry_trigger_price(candles)
 
     assert entries.tolist() == [True, False]
-    assert exits.tolist() == [True, False]
+    assert entry_prices.tolist() == [160.0, 180.0]
