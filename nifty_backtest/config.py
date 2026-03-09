@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 import os
@@ -116,7 +117,7 @@ def _load_streamlit_section_values(section: str, *keys: str) -> tuple[str | None
         section_values = secrets.get(section, {})
     except Exception:
         return tuple(None for _ in keys)
-    if isinstance(section_values, dict):
+    if isinstance(section_values, Mapping):
         resolved = tuple(str(section_values.get(key, "")).strip() or None for key in keys)
         if all(resolved):
             return resolved
